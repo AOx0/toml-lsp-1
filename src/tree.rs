@@ -9,7 +9,7 @@ pub struct Tree<'a> {
 impl<'a> Tree<'a> {
     pub fn new(arena: &'a bumpalo::Bump) -> Self {
         Self {
-            kind: Kind::Error,
+            kind: Kind::Unkown,
             children: Vec::new_in(arena),
         }
     }
@@ -36,12 +36,20 @@ pub enum Kind {
     TableArray,
     Array,
     InlineTable,
-    Assign,
-    Error,
+    KeyVal,
+    Key,
     Toml,
     String,
     StringMulti,
     Integer,
     Float,
     Bool,
+
+    // Collections
+    KeyValList,
+
+    // Errors
+    MissingKey,
+    MissingValue,
+    Unkown,
 }

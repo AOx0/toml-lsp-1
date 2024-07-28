@@ -1,9 +1,16 @@
 use crate::span::Span;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+// #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Token {
     pub span: Span,
     pub kind: Kind,
+}
+
+impl core::fmt::Debug for Token {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{:?}", self.kind)
+    }
 }
 
 impl core::default::Default for Token {
