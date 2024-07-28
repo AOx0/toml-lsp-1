@@ -1,0 +1,20 @@
+Toml = Expr*
+Expr =  TableArray | Table | KeyValueDecl
+Table = "[" Keys "]" '\n'+ (KeyVal '\n'+)*
+TableArray = "[[" Keys "]] '\n'+ KeyVal*
+Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
+KeyVal = Key '=' Value
+Value = String | Number | Bool | Array | TableInline
+Array = "[" (Value(,|\n)+)* "]"
+TableInline = "{" KeyVal,* "}"
+
+
+Toml = Expr*
+Expr =  TableArray | Table | KeyValueDecl
+Table = "[" Keys "]" '\n'+ (KeyVal '\n'+)*
+TableArray = "[[" Keys "]] '\n'+ KeyVal*
+Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
+KeyVal = Key '=' Value
+Value = String | Number | Bool | Array | TableInline
+Array = "[" (Value(,|\n)+)* "]"
+TableInline = "{" KeyVal,* "}"

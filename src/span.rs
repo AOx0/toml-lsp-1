@@ -1,7 +1,13 @@
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+impl core::fmt::Debug for Span {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{start}..{end}", start = self.start, end = self.end)
+    }
 }
 
 impl From<core::ops::Range<usize>> for Span {
