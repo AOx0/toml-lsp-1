@@ -14,4 +14,5 @@ fn main() {
     let (tree, errors) = parser.tree();
 
     println!("{:#?}", tree);
+    println!("{:#?}", errors);
 }

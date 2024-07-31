@@ -1,6 +1,8 @@
-use super::Parser;
+use super::{Error, Parser};
 use crate::tree;
 use aoxo_toml::token::{self, Kind::*};
+
+const TABLE_FOLLOW: [token::Kind; 3] = [StringOrKey, Key, LBracket];
 
 // Toml = Expr*
 pub fn toml(p: &mut Parser) {
@@ -24,34 +26,24 @@ fn expr(p: &mut Parser) {
         p.close(mark, tree::Kind::Table);
     } else {
         keyval(p);
-        p.expect(Newline);
-        while p.advance_if(Newline) {}
+        p.skip_expect(Newline);
     }
 }
-
-fn new_lines(p: &mut Parser) {
-    if p.next_is(Eof) {
-        return;
-    }
-    while p.advance_if(Newline) {}
-}
-
-const TABLE_FOLLOW: [token::Kind; 3] = [StringOrKey, Key, LBracket];
 
 // Table = '[' Key ']' '\n' (KeyVal '\n')*
 fn table(p: &mut Parser) {
-    p.expect(LBracket);
+    p.skip_expect(LBracket);
     key(p);
     if guard(p, &[Newline], &TABLE_FOLLOW) {
         return;
     }
-    p.expect(RBracket);
-    new_lines(p);
+    p.skip_expect(RBracket);
+    p.skip_expect(Newline);
 
     let mark = p.open();
     while !p.next_is(LBracket) && !p.next_is(Eof) {
         keyval(p);
-        new_lines(p);
+        p.skip_expect(Newline);
     }
 
     p.close(mark, tree::Kind::KeyValList);
@@ -78,29 +70,28 @@ fn guard(
 
 // TableArray = "[[" Keys "]] '\n'+ KeyVal*
 fn table_array(p: &mut Parser) {
-    p.expect(LBracket);
-    p.expect(LBracket);
+    p.skip_expect(LBracket);
+    p.skip_expect(LBracket);
     while p.next_is(LBracket) {
-        p.advance_with_error(tree::Kind::ExtraDelimiter);
+        p.advance_with_error(tree::Kind::Extra(LBracket));
     }
 
     key(p);
     if guard(p, &[Newline], &[StringOrKey, Key, LBracket]) {
         return;
     }
-    p.expect(RBracket);
-    p.expect(RBracket);
+    p.skip_expect(RBracket);
+    p.skip_expect(RBracket);
     while p.next_is(RBracket) {
-        p.advance_with_error(tree::Kind::ExtraDelimiter);
+        p.advance_with_error(tree::Kind::Extra(RBracket));
     }
 
-    p.expect(Newline);
-    while p.advance_if(Newline) {}
+    p.skip_expect(Newline);
 
     let mark = p.open();
     while !p.next_is(LBracket) && !p.next_is(Eof) {
         keyval(p);
-        new_lines(p);
+        p.skip_expect(Newline);
     }
 
     p.close(mark, tree::Kind::KeyValList);
@@ -109,23 +100,23 @@ fn table_array(p: &mut Parser) {
 // Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
 fn key(p: &mut Parser) {
     let mark = p.open();
-    let error = !p.advance_if_any(&[StringOrKey, Key]);
-    while p.advance_if(Dot) {
+    if p.skip_expect_any(&[StringOrKey, Key]).failed() {
+        p.close(mark, tree::Kind::MissingKey);
+        return;
+    }
+
+    while p.advance_if(Dot).success() {
         p.advance_if_any(&[StringOrKey, Key]);
     }
 
-    if error {
-        p.close(mark, tree::Kind::MissingKey);
-    } else {
-        p.close(mark, tree::Kind::Key);
-    }
+    p.close(mark, tree::Kind::Key);
 }
 
 // KeyVal = Key '=' Value
 fn keyval(p: &mut Parser) {
     let mark = p.open();
     key(p);
-    p.expect(Equal);
+    p.skip_expect(Equal);
     value(p);
     p.close(mark, tree::Kind::KeyVal);
 }
@@ -155,19 +146,32 @@ fn value(p: &mut Parser) {
         table_inline(p);
         p.close(mark, tree::Kind::InlineTable);
     } else {
+        p.errors.push(Error {
+            kind: tree::Kind::MissingValue,
+            span: p.lexer.peek_span::<0>(),
+        });
         p.close(mark, tree::Kind::MissingValue);
     }
 }
 
 // Array = "[" (Value(,|\n)+)* "]"
 fn array(p: &mut Parser) {
-    p.expect(LBracket);
-    if p.next_is(Newline) {
-        new_lines(p);
-    }
+    p.skip_expect(LBracket);
+    p.skip_if(Newline);
+
     while !p.next_is(RBracket) && !p.next_is(Eof) {
         value(p);
-        while p.next_is(Comma) || p.next_is(Newline) {
+        if p.peek_kind() == Comma {
+            p.advance();
+        } else if p.peek_kind() == Newline {
+            p.advance();
+        }
+
+        while matches!(p.peek_kind(), Newline | Comma) {
+            p.errors.push(Error {
+                kind: tree::Kind::Extra(Newline),
+                span: p.lexer.peek_span::<0>(),
+            });
             p.advance();
         }
     }
@@ -179,7 +183,7 @@ fn table_inline(p: &mut Parser) {
     p.skip_expect(LCurly);
     while !p.next_is(RCurly) && !p.next_is(Eof) {
         keyval(p);
-        while p.advance_if(Comma) {}
+        while p.advance_if(Comma).success() {}
     }
     p.skip_expect(RCurly);
 }

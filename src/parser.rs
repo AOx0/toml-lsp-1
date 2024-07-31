@@ -32,6 +32,30 @@ struct MarkOpen {
     index: usize,
 }
 
+enum Status {
+    Success,
+    Failure,
+}
+
+impl From<bool> for Status {
+    fn from(b: bool) -> Self {
+        if b {
+            Status::Success
+        } else {
+            Status::Failure
+        }
+    }
+}
+
+impl Status {
+    fn success(&self) -> bool {
+        matches!(self, Status::Success)
+    }
+    fn failed(&self) -> bool {
+        matches!(self, Status::Failure)
+    }
+}
+
 impl<'src, 'a> Parser<'src, 'a> {
     pub fn new(source: &'src str, arena: &'a bumpalo::Bump) -> Self {
         Self {
@@ -64,6 +88,13 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
+    // fn add_error(&mut self, kind: tree::Kind) {
+    //     self.errors.push(Error {
+    //         span: self.lexer.peek_span::<0>(),
+    //         kind,
+    //     })
+    // }
+
     fn advance(&mut self) {
         assert!(!self.eof());
         #[cfg(debug_assertions)]
@@ -78,6 +109,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         #[cfg(debug_assertions)]
         self.fuel.set(u8::MAX);
         self.events.push(Event::Skip);
+        self.lexer.next_token();
     }
 
     fn advance_with_error(&mut self, kind: tree::Kind) {
@@ -108,6 +140,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.fuel
                 .set(self.fuel.get().saturating_sub(N.try_into().unwrap()));
         }
+
         self.lexer.peek_kind_array::<N>() == kinds
     }
 
@@ -120,43 +153,61 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.peek_kind() == kind
     }
 
-    fn advance_if(&mut self, kind: aoxo_toml::token::Kind) -> bool {
+    fn advance_if(&mut self, kind: aoxo_toml::token::Kind) -> Status {
         self.advance_if_any(&[kind])
     }
 
-    fn skip_if(&mut self, kind: aoxo_toml::token::Kind) -> bool {
+    fn skip_if(&mut self, kind: aoxo_toml::token::Kind) -> Status {
         self.skip_if_any(&[kind])
     }
 
     fn expect(&mut self, kind: aoxo_toml::token::Kind) {
-        if !self.advance_if(kind) {
+        if self.advance_if(kind).failed() {
             let m = self.open();
             self.close(m, tree::Kind::Expected(kind));
+        }
+    }
+
+    fn skip_expect_any(&mut self, kinds: &'static [aoxo_toml::token::Kind]) -> Status {
+        if self.skip_if_any(kinds).failed() {
+            let m = self.open();
+            self.errors.push(Error {
+                span: self.lexer.peek_span::<0>(),
+                kind: tree::Kind::ExpectedAny(&kinds),
+            });
+            self.close(m, tree::Kind::ExpectedAny(&kinds));
+            Status::Failure
+        } else {
+            Status::Success
         }
     }
 
     fn skip_expect(&mut self, kind: aoxo_toml::token::Kind) {
-        if !self.skip_if(kind) {
+        if self.skip_if(kind).failed() {
             let m = self.open();
+            self.errors.push(Error {
+                span: self.lexer.peek_span::<0>(),
+                kind: tree::Kind::Expected(kind),
+            });
             self.close(m, tree::Kind::Expected(kind));
         }
     }
 
-    fn advance_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> bool {
+    fn advance_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> Status {
         if kinds.contains(&self.peek_kind()) {
             self.advance();
-            true
+            Status::Success
         } else {
-            false
+            Status::Failure
         }
     }
 
-    fn skip_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> bool {
+    fn skip_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> Status {
         if kinds.contains(&self.peek_kind()) {
             self.skip();
-            true
+            Status::Success
         } else {
-            false
+            Status::Failure
         }
     }
 
@@ -191,7 +242,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
         }
 
-        assert!(stack.len() == 1);
+        assert!(stack.len() == 1, "stack is not empty {:?}", stack);
         assert_eq!(self.lexer.peek_kind::<0>(), aoxo_toml::token::Kind::Eof);
 
         (stack.pop().unwrap(), self.errors)

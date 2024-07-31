@@ -87,10 +87,11 @@ pub enum Kind {
     // Errors
     MissingKey,
     MissingValue,
-    ExtraDelimiter,
+    Extra(token::Kind),
     Guard,
     Unkown,
     Expected(token::Kind),
+    ExpectedAny(&'static [token::Kind]),
 }
 
 impl Kind {
@@ -103,9 +104,11 @@ impl Kind {
             self,
             Self::MissingKey
                 | Self::MissingValue
-                | Self::ExtraDelimiter
+                | Self::Extra(_)
                 | Self::Guard
                 | Self::Unkown
+                | Self::Expected(_)
+                | Self::ExpectedAny(_)
         )
     }
 
