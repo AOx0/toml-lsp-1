@@ -1,4 +1,4 @@
-use super::{Error, Parser};
+use super::Parser;
 use crate::tree;
 use aoxo_toml::token::{self, Kind::*};
 
@@ -100,7 +100,7 @@ fn table_array(p: &mut Parser) {
 // Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
 fn key(p: &mut Parser) {
     let mark = p.open();
-    if p.skip_expect_any(&[StringOrKey, Key]).failed() {
+    if p.skip_if_any(&[StringOrKey, Key]).failed() {
         p.close(mark, tree::Kind::MissingKey);
         return;
     }
@@ -146,10 +146,7 @@ fn value(p: &mut Parser) {
         table_inline(p);
         p.close(mark, tree::Kind::InlineTable);
     } else {
-        p.errors.push(Error {
-            kind: tree::Kind::MissingValue,
-            span: p.lexer.peek_span::<0>(),
-        });
+        p.add_error(tree::Kind::MissingValue);
         p.close(mark, tree::Kind::MissingValue);
     }
 }
@@ -161,17 +158,17 @@ fn array(p: &mut Parser) {
 
     while !p.next_is(RBracket) && !p.next_is(Eof) {
         value(p);
+
+        // We expect a comma or newline after each value
         if p.peek_kind() == Comma {
-            p.advance();
-        } else if p.peek_kind() == Newline {
             p.advance();
         }
 
+        // But only one comma, and any number of newlines
         while matches!(p.peek_kind(), Newline | Comma) {
-            p.errors.push(Error {
-                kind: tree::Kind::Extra(Newline),
-                span: p.lexer.peek_span::<0>(),
-            });
+            if p.peek_kind() == Comma {
+                p.add_error(tree::Kind::Extra(Comma));
+            }
             p.advance();
         }
     }

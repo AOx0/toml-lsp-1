@@ -88,12 +88,12 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // fn add_error(&mut self, kind: tree::Kind) {
-    //     self.errors.push(Error {
-    //         span: self.lexer.peek_span::<0>(),
-    //         kind,
-    //     })
-    // }
+    fn add_error(&mut self, kind: tree::Kind) {
+        self.errors.push(Error {
+            span: self.lexer.peek_span::<0>(),
+            kind,
+        })
+    }
 
     fn advance(&mut self) {
         assert!(!self.eof());
@@ -114,10 +114,7 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn advance_with_error(&mut self, kind: tree::Kind) {
         let mark = self.open();
-        self.errors.push(Error {
-            span: self.lexer.peek_span::<0>(),
-            kind,
-        });
+        self.add_error(kind);
         self.advance();
         self.close(mark, kind);
     }
@@ -168,27 +165,10 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    fn skip_expect_any(&mut self, kinds: &'static [aoxo_toml::token::Kind]) -> Status {
-        if self.skip_if_any(kinds).failed() {
-            let m = self.open();
-            self.errors.push(Error {
-                span: self.lexer.peek_span::<0>(),
-                kind: tree::Kind::ExpectedAny(&kinds),
-            });
-            self.close(m, tree::Kind::ExpectedAny(&kinds));
-            Status::Failure
-        } else {
-            Status::Success
-        }
-    }
-
     fn skip_expect(&mut self, kind: aoxo_toml::token::Kind) {
         if self.skip_if(kind).failed() {
             let m = self.open();
-            self.errors.push(Error {
-                span: self.lexer.peek_span::<0>(),
-                kind: tree::Kind::Expected(kind),
-            });
+            self.add_error(tree::Kind::Expected(kind));
             self.close(m, tree::Kind::Expected(kind));
         }
     }
