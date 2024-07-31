@@ -90,6 +90,7 @@ pub enum Kind {
     ExtraDelimiter,
     Guard,
     Unkown,
+    Expected(token::Kind),
 }
 
 impl Kind {

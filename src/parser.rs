@@ -1,8 +1,14 @@
+use crate::tree;
+use aoxo_toml::{lexer::Lexer, span::Span};
 use std::{cell::Cell, u8};
 
-use aoxo_toml::{lexer::Lexer, span::Span};
+mod grammar;
 
-use crate::tree;
+#[derive(Debug)]
+pub struct Error {
+    pub span: Span,
+    pub kind: tree::Kind,
+}
 
 #[derive(Debug)]
 pub struct Parser<'src, 'a> {
@@ -11,12 +17,14 @@ pub struct Parser<'src, 'a> {
     events: Vec<Event>,
     #[cfg(debug_assertions)]
     fuel: Cell<u8>,
+    errors: Vec<Error>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Event {
     Close,
     Advance { token: aoxo_toml::token::Token },
+    Skip,
     Open { kind: tree::Kind, span: Span },
 }
 
@@ -32,6 +40,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             events: Vec::with_capacity(15),
             #[cfg(debug_assertions)]
             fuel: Cell::new(u8::MAX),
+            errors: Vec::new(),
         }
     }
 
@@ -64,8 +73,19 @@ impl<'src, 'a> Parser<'src, 'a> {
         });
     }
 
+    fn skip(&mut self) {
+        assert!(!self.eof());
+        #[cfg(debug_assertions)]
+        self.fuel.set(u8::MAX);
+        self.events.push(Event::Skip);
+    }
+
     fn advance_with_error(&mut self, kind: tree::Kind) {
         let mark = self.open();
+        self.errors.push(Error {
+            span: self.lexer.peek_span::<0>(),
+            kind,
+        });
         self.advance();
         self.close(mark, kind);
     }
@@ -104,20 +124,36 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.advance_if_any(&[kind])
     }
 
+    fn skip_if(&mut self, kind: aoxo_toml::token::Kind) -> bool {
+        self.skip_if_any(&[kind])
+    }
+
     fn expect(&mut self, kind: aoxo_toml::token::Kind) {
         if !self.advance_if(kind) {
-            eprintln!(
-                "expected {:?} at {}",
-                kind,
-                self.lexer.peek_span::<0>().location(self.lexer.source())
-            );
-            self.advance();
+            let m = self.open();
+            self.close(m, tree::Kind::Expected(kind));
+        }
+    }
+
+    fn skip_expect(&mut self, kind: aoxo_toml::token::Kind) {
+        if !self.skip_if(kind) {
+            let m = self.open();
+            self.close(m, tree::Kind::Expected(kind));
         }
     }
 
     fn advance_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> bool {
         if kinds.contains(&self.peek_kind()) {
             self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> bool {
+        if kinds.contains(&self.peek_kind()) {
+            self.skip();
             true
         } else {
             false
@@ -132,7 +168,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         grammar::toml(self)
     }
 
-    pub fn tree(mut self) -> tree::Tree<'a> {
+    pub fn tree(mut self) -> (tree::Tree<'a>, Vec<Error>) {
         let mut stack: Vec<tree::Tree<'a>> = Vec::new();
 
         assert!(matches!(self.events.pop(), Some(Event::Close)));
@@ -151,198 +187,13 @@ impl<'src, 'a> Parser<'src, 'a> {
                     stack.last_mut().unwrap().span(token.span);
                     stack.last_mut().unwrap().child(tree::Child::Token(token));
                 }
+                Event::Skip => {}
             }
         }
 
         assert!(stack.len() == 1);
         assert_eq!(self.lexer.peek_kind::<0>(), aoxo_toml::token::Kind::Eof);
-        stack.pop().unwrap()
-    }
-}
 
-mod grammar {
-    use super::Parser;
-    use crate::tree;
-    use aoxo_toml::token::Kind::*;
-
-    // Toml = Expr*
-    pub fn toml(p: &mut Parser) {
-        let mark = p.open();
-        while !p.eof() {
-            expr(p);
-        }
-
-        p.close(mark, tree::Kind::Toml);
-    }
-
-    // Expr =  TableArray | Table | KeyValueDecl
-    fn expr(p: &mut Parser) {
-        if p.next_are([LBracket, LBracket]) {
-            let mark = p.open();
-            table_array(p);
-            p.close(mark, tree::Kind::TableArray);
-        } else if p.next_is(LBracket) {
-            let mark = p.open();
-            table(p);
-            p.close(mark, tree::Kind::Table);
-        } else {
-            keyval(p);
-            p.expect(Newline);
-            while p.advance_if(Newline) {}
-        }
-    }
-
-    fn spaces(p: &mut Parser) {
-        while p.advance_if(Space) {}
-    }
-
-    fn new_lines(p: &mut Parser) {
-        if p.next_is(Eof) {
-            return;
-        }
-        while p.advance_if(Newline) {}
-    }
-
-    // Table = "[" Keys "]" '\n'+ (KeyVal '\n'+)*
-    fn table(p: &mut Parser) {
-        p.expect(LBracket);
-        key(p);
-        p.expect(RBracket);
-        new_lines(p);
-
-        let mark = p.open();
-        while !p.next_is(LBracket) && !p.next_is(Eof) {
-            keyval(p);
-            new_lines(p);
-        }
-
-        p.close(mark, tree::Kind::KeyValList);
-    }
-
-    fn guard(
-        p: &mut Parser,
-        forbid: &[aoxo_toml::token::Kind],
-        advance_until: &[aoxo_toml::token::Kind],
-    ) -> bool {
-        if forbid.contains(&p.peek_kind()) {
-            let mark = p.open();
-
-            while !advance_until.contains(&p.peek_kind()) {
-                p.advance();
-            }
-
-            p.close(mark, tree::Kind::Guard);
-            true
-        } else {
-            false
-        }
-    }
-
-    // TableArray = "[[" Keys "]] '\n'+ KeyVal*
-    fn table_array(p: &mut Parser) {
-        p.expect(LBracket);
-        p.expect(LBracket);
-        while p.next_is(LBracket) {
-            p.advance_with_error(tree::Kind::ExtraDelimiter);
-        }
-
-        key(p);
-        if guard(p, &[Newline], &[StringOrKey, Key, LBracket]) {
-            return;
-        }
-        p.expect(RBracket);
-        p.expect(RBracket);
-        while p.next_is(RBracket) {
-            p.advance_with_error(tree::Kind::ExtraDelimiter);
-        }
-
-        p.expect(Newline);
-        while p.advance_if(Newline) {}
-
-        let mark = p.open();
-        while !p.next_is(LBracket) && !p.next_is(Eof) {
-            keyval(p);
-            new_lines(p);
-        }
-
-        p.close(mark, tree::Kind::KeyValList);
-    }
-
-    // Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
-    fn key(p: &mut Parser) {
-        let mark = p.open();
-        let error = !p.advance_if_any(&[StringOrKey, Key]);
-        while p.advance_if(Dot) {
-            p.advance_if_any(&[StringOrKey, Key]);
-        }
-
-        if error {
-            p.close(mark, tree::Kind::MissingKey);
-        } else {
-            p.close(mark, tree::Kind::Key);
-        }
-    }
-
-    // KeyVal = Key '=' Value
-    fn keyval(p: &mut Parser) {
-        let mark = p.open();
-        key(p);
-        p.expect(Equal);
-        value(p);
-        p.close(mark, tree::Kind::KeyVal);
-    }
-
-    // Value = String | Number | Bool | Array | TableInline
-    fn value(p: &mut Parser) {
-        let mark = p.open();
-        if p.next_is(StringOrKey) {
-            p.advance();
-            p.close(mark, tree::Kind::String);
-        } else if p.next_is(StringMultiline) {
-            p.advance();
-            p.close(mark, tree::Kind::StringMulti);
-        } else if p.next_is(Float) {
-            p.advance();
-            p.close(mark, tree::Kind::Float);
-        } else if p.next_is(Integer) {
-            p.advance();
-            p.close(mark, tree::Kind::Integer);
-        } else if p.next_is(Bool) {
-            p.advance();
-            p.close(mark, tree::Kind::Bool);
-        } else if p.next_is(LBracket) {
-            array(p);
-            p.close(mark, tree::Kind::Array);
-        } else if p.next_is(LCurly) {
-            table_inline(p);
-            p.close(mark, tree::Kind::InlineTable);
-        } else {
-            p.close(mark, tree::Kind::MissingValue);
-        }
-    }
-
-    // Array = "[" (Value(,|\n)+)* "]"
-    fn array(p: &mut Parser) {
-        p.expect(LBracket);
-        if p.next_is(Newline) {
-            new_lines(p);
-        }
-        while !p.next_is(RBracket) && !p.next_is(Eof) {
-            value(p);
-            while p.next_is(Comma) || p.next_is(Newline) {
-                p.advance();
-            }
-        }
-        p.expect(RBracket);
-    }
-
-    // TableInline = "{" KeyVal,* "}"
-    fn table_inline(p: &mut Parser) {
-        p.expect(LCurly);
-        while !p.next_is(RCurly) && !p.next_is(Eof) {
-            keyval(p);
-            while p.advance_if(Comma) {}
-        }
-        p.expect(RCurly);
+        (stack.pop().unwrap(), self.errors)
     }
 }

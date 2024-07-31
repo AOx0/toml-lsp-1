@@ -11,7 +11,7 @@ fn main() {
 
     let mut parser = parser::Parser::new(&source, &arena);
     parser.parse();
-    let tree = parser.tree();
+    let (tree, errors) = parser.tree();
 
     println!("{:#?}", tree);
 }

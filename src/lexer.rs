@@ -95,9 +95,12 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
         self.cursor.bump();
 
         let kind = match peek {
-            ' ' | '\t' | '\r' => token::Kind::Space,
+            ' ' | '\t' => token::Kind::Space,
             // '\t' => token::Kind::Tab,
-            '\n' => token::Kind::Newline,
+            c @ ('\n' | '\r') => {
+                self.consume_matching(c);
+                token::Kind::Newline
+            }
             '-' | '+' => self.consume_number_or_key(),
             '0'..='9' => self.consume_number_or_key(),
             '\'' if self.matches(to_char_array!("''")) => {
@@ -131,6 +134,14 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
         let span = Span::from(start..self.cursor.cursor());
         self.last_span = span;
         Token { span, kind }
+    }
+
+    fn consume_matching(&mut self, matching: char) {
+        while let Some(peek) = self.cursor.peek()
+            && peek == matching
+        {
+            self.cursor.bump();
+        }
     }
 
     fn consume_comment(&mut self) -> token::Kind {
