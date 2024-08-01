@@ -19,5 +19,5 @@ Value =
     | Array
     | TableInline
 
-Array = '[' (Value ( ',' | '\n' ))* ']'
+Array = '[' Value? (',' '\n'? Value)* ']'
 TableInline = '{' KeyVal? (',' KeyVal)* '}'

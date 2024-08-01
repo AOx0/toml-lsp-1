@@ -85,6 +85,7 @@ pub enum Kind {
     KeyValList,
 
     // Errors
+    MissingKeyValue,
     MissingKey,
     MissingValue,
     Extra(token::Kind),
@@ -94,7 +95,7 @@ pub enum Kind {
     ExpectedAny(&'static [token::Kind]),
     UnclosedString,
     InvalidToken,
-    Forbidden(token::Kind),
+    NewlinesForbiddenInContext,
 }
 
 impl Kind {

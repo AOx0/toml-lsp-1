@@ -34,7 +34,19 @@ pub fn toml(p: &mut Parser) {
 }
 
 fn maybe_key(p: &Parser) -> bool {
+    // FIRST(Key) "str_key", "key"
     p.next_is(StringOrKey) || p.next_is(Key)
+}
+
+fn maybe_value(p: &Parser) -> bool {
+    // FIRST(Value) "string", "number", "bool", "[", "{"
+    p.next_is(StringOrKey)
+        || p.next_is(StringMultiline)
+        || p.next_is(Integer)
+        || p.next_is(Float)
+        || p.next_is(Bool)
+        || p.next_is(LBracket)
+        || p.next_is(LCurly)
 }
 
 // Expr =
@@ -179,31 +191,54 @@ fn value(p: &mut Parser) {
     }
 }
 
-// Array = '[' (Value ( ',' | '\n' ))* ']'
+// Array = '[' Value? (',' '\n'? Value)* ']'
 fn array(p: &mut Parser) {
     let mark = p.open();
 
     p.skip_expect(LBracket);
 
-    while !p.eof() && !p.next_is(RBracket) {
-        value(p);
+    check_newline(p);
 
+    if maybe_value(p) {
+        value(p);
+    }
+
+    check_newline(p);
+
+    while maybe_value(p) || p.next_is(Comma) || p.next_is(Newline) {
         if p.next_is(Comma) {
             p.skip();
+        } else {
+            p.add_error(tree::Kind::Expected(Comma));
         }
 
-        if p.next_is(Newline) {
-            p.skip();
+        check_newline(p);
+
+        if maybe_value(p) {
+            value(p);
+        } else {
+            p.add_error(tree::Kind::MissingValue);
         }
 
-        if p.next_is(RBracket) {
-            break;
-        }
+        check_newline(p);
     }
 
     p.skip_expect(RBracket);
 
     p.close(mark, tree::Kind::Array);
+}
+
+fn check_forbidden_newline(p: &mut Parser) {
+    if p.next_is(Newline) {
+        p.add_error(tree::Kind::NewlinesForbiddenInContext);
+        p.skip();
+    }
+}
+
+fn check_newline(p: &mut Parser) {
+    if p.next_is(Newline) {
+        p.skip();
+    }
 }
 
 // TableInline = '{' KeyVal? (',' KeyVal)* '}'
@@ -212,13 +247,30 @@ fn table_inline(p: &mut Parser) {
 
     p.skip_expect(LCurly);
 
+    check_forbidden_newline(p);
+
     if maybe_key(p) {
         key_val(p);
     }
 
-    while p.next_is(Comma) {
-        p.skip();
-        key_val(p);
+    check_forbidden_newline(p);
+
+    while p.next_is(Comma) || maybe_key(p) || p.next_is(Newline) {
+        if p.next_is(Comma) {
+            p.skip();
+        } else {
+            p.add_error(tree::Kind::Expected(Comma));
+        }
+
+        check_forbidden_newline(p);
+
+        if maybe_key(p) {
+            key_val(p);
+        } else {
+            p.add_error(tree::Kind::MissingKeyValue);
+        }
+
+        check_forbidden_newline(p);
     }
 
     p.skip_expect(RCurly);
