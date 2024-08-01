@@ -1,12 +1,12 @@
 use aoxo_toml::{span::Span, token};
 
-pub struct Tree<'a> {
+pub struct Tree {
     pub kind: Kind,
     pub span: Span,
-    pub children: Vec<Child<'a>, &'a bumpalo::Bump>,
+    pub children: Vec<Child>,
 }
 
-impl core::fmt::Debug for Tree<'_> {
+impl core::fmt::Debug for Tree {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if !self.children.is_empty() {
             f.debug_struct("Tree")
@@ -23,16 +23,16 @@ impl core::fmt::Debug for Tree<'_> {
     }
 }
 
-impl<'a> Tree<'a> {
-    pub fn new(arena: &'a bumpalo::Bump) -> Self {
+impl Tree {
+    pub fn new() -> Self {
         Self {
             kind: Kind::Unkown,
             span: Span::from(0..0),
-            children: Vec::new_in(arena),
+            children: Vec::new(),
         }
     }
 
-    pub fn child(&mut self, child: Child<'a>) {
+    pub fn child(&mut self, child: Child) {
         self.children.push(child);
     }
 
@@ -52,12 +52,12 @@ impl<'a> Tree<'a> {
     }
 }
 
-pub enum Child<'a> {
-    Tree(Tree<'a>),
+pub enum Child {
+    Tree(Tree),
     Token(token::Token),
 }
 
-impl core::fmt::Debug for Child<'_> {
+impl core::fmt::Debug for Child {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Child::Tree(tree) => write!(f, "{:#?}", tree),
@@ -92,6 +92,8 @@ pub enum Kind {
     Unkown,
     Expected(token::Kind),
     ExpectedAny(&'static [token::Kind]),
+    Unclosed,
+    InvalidToken,
 }
 
 impl Kind {
@@ -109,6 +111,7 @@ impl Kind {
                 | Self::Unkown
                 | Self::Expected(_)
                 | Self::ExpectedAny(_)
+                | Self::Unclosed
         )
     }
 

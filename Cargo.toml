@@ -5,4 +5,8 @@ edition = "2021"
 
 [dependencies]
 bumpalo = { version = "3.16.0", features = ["allocator_api"] }
+clap = { version = "4.5.13", features = ["derive"] }
 const-str = "0.5.7"
+shared_arena = "0.8.4"
+tokio = { version = "1.39.2", features = ["full"] }
+tower-lsp = "0.20.0"

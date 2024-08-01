@@ -1,5 +1,5 @@
 use crate::tree;
-use aoxo_toml::{lexer::Lexer, span::Span};
+use aoxo_toml::{lexer::Lexer, span::Span, token};
 use std::{cell::Cell, u8};
 
 mod grammar;
@@ -11,8 +11,7 @@ pub struct Error {
 }
 
 #[derive(Debug)]
-pub struct Parser<'src, 'a> {
-    arena: &'a bumpalo::Bump,
+pub struct Parser<'src> {
     lexer: Lexer<'src>,
     events: Vec<Event>,
     #[cfg(debug_assertions)]
@@ -24,7 +23,7 @@ pub struct Parser<'src, 'a> {
 enum Event {
     Close,
     Advance { token: aoxo_toml::token::Token },
-    Skip,
+    Skip { token: aoxo_toml::token::Token },
     Open { kind: tree::Kind, span: Span },
 }
 
@@ -56,10 +55,9 @@ impl Status {
     }
 }
 
-impl<'src, 'a> Parser<'src, 'a> {
-    pub fn new(source: &'src str, arena: &'a bumpalo::Bump) -> Self {
+impl<'src> Parser<'src> {
+    pub fn new(source: &'src str) -> Self {
         Self {
-            arena,
             lexer: Lexer::new(source),
             events: Vec::with_capacity(15),
             #[cfg(debug_assertions)]
@@ -90,7 +88,7 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn add_error(&mut self, kind: tree::Kind) {
         self.errors.push(Error {
-            span: self.lexer.peek_span::<0>(),
+            span: self.lexer.peek_span::<0>().reduce_to(1),
             kind,
         })
     }
@@ -108,8 +106,9 @@ impl<'src, 'a> Parser<'src, 'a> {
         assert!(!self.eof());
         #[cfg(debug_assertions)]
         self.fuel.set(u8::MAX);
-        self.events.push(Event::Skip);
-        self.lexer.next_token();
+        self.events.push(Event::Skip {
+            token: self.lexer.next_token(),
+        });
     }
 
     fn advance_with_error(&mut self, kind: tree::Kind) {
@@ -123,8 +122,11 @@ impl<'src, 'a> Parser<'src, 'a> {
         #[cfg(debug_assertions)]
         if self.fuel.get() == 0 {
             panic!(
-                "parser is stuck at {}",
-                self.lexer.peek_span::<0>().location(self.lexer.source())
+                "parser is stuck at {} with token {:?}",
+                self.lexer
+                    .peek_span::<0>()
+                    .start_location(self.lexer.source()),
+                self.lexer.peek_kind::<0>()
             )
         }
         self.lexer.peek_kind::<0>()
@@ -195,19 +197,20 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.lexer.peek_kind::<0>() == aoxo_toml::token::Kind::Eof
     }
 
-    pub fn parse(&mut self) {
-        grammar::toml(self)
+    pub fn parse(mut self) -> Self {
+        grammar::toml(&mut self);
+        self
     }
 
-    pub fn tree(mut self) -> (tree::Tree<'a>, Vec<Error>) {
-        let mut stack: Vec<tree::Tree<'a>> = Vec::new();
+    pub fn tree(mut self) -> (tree::Tree, Vec<Error>) {
+        let mut stack: Vec<tree::Tree> = Vec::new();
 
         assert!(matches!(self.events.pop(), Some(Event::Close)));
 
         for event in self.events.iter().copied() {
             match event {
                 Event::Open { kind, span } => {
-                    stack.push(tree::Tree::new(self.arena).with_kind(kind).with_span(span));
+                    stack.push(tree::Tree::new().with_kind(kind).with_span(span));
                 }
                 Event::Close => {
                     let tree = stack.pop().unwrap();
@@ -218,7 +221,11 @@ impl<'src, 'a> Parser<'src, 'a> {
                     stack.last_mut().unwrap().span(token.span);
                     stack.last_mut().unwrap().child(tree::Child::Token(token));
                 }
-                Event::Skip => {}
+                Event::Skip { token } => {
+                    if token.kind != token::Kind::Eof && token.kind != token::Kind::Newline {
+                        stack.last_mut().unwrap().span(token.span);
+                    }
+                }
             }
         }
 

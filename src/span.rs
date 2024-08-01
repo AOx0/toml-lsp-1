@@ -1,3 +1,5 @@
+use tower_lsp::lsp_types::Position;
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Span {
     pub start: usize,
@@ -31,8 +33,42 @@ impl core::fmt::Display for Location {
     }
 }
 
+impl Into<Position> for Location {
+    fn into(self) -> Position {
+        Position {
+            line: (self.line - 1) as u32,
+            character: (self.col - 1) as u32,
+        }
+    }
+}
+
 impl Span {
-    pub fn location(&self, source: &str) -> Location {
+    pub fn reduce_to(&self, len: usize) -> Span {
+        Span {
+            start: self.start,
+            end: self.end.min(self.start + len),
+        }
+    }
+
+    pub fn end_location(&self, source: &str) -> Location {
+        let mut line = 1;
+        let mut col = 1;
+        for (i, c) in source.chars().enumerate() {
+            if i == self.end {
+                return Location { line, col };
+            }
+            if c == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+
+        Location { line, col }
+    }
+
+    pub fn start_location(&self, source: &str) -> Location {
         let mut line = 1;
         let mut col = 1;
         for (i, c) in source.chars().enumerate() {

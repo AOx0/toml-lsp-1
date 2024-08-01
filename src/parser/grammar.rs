@@ -57,7 +57,7 @@ fn guard(
     if forbid.contains(&p.peek_kind()) {
         let mark = p.open();
 
-        while !advance_until.contains(&p.peek_kind()) {
+        while !advance_until.contains(&p.peek_kind()) && !p.eof() {
             p.advance();
         }
 
@@ -89,7 +89,7 @@ fn table_array(p: &mut Parser) {
     p.skip_expect(Newline);
 
     let mark = p.open();
-    while !p.next_is(LBracket) && !p.next_is(Eof) {
+    while !p.next_is(LBracket) && !p.eof() {
         keyval(p);
         p.skip_expect(Newline);
     }
@@ -100,12 +100,14 @@ fn table_array(p: &mut Parser) {
 // Key = (StringOrKey | Key) ('.' (StringOrKey | Key))*
 fn key(p: &mut Parser) {
     let mark = p.open();
-    if p.skip_if_any(&[StringOrKey, Key]).failed() {
+    if p.advance_if_any(&[StringOrKey, Key]).failed() {
+        p.add_error(tree::Kind::MissingKey);
+        p.advance();
         p.close(mark, tree::Kind::MissingKey);
         return;
     }
 
-    while p.advance_if(Dot).success() {
+    while p.skip_if(Dot).success() {
         p.advance_if_any(&[StringOrKey, Key]);
     }
 
@@ -124,20 +126,15 @@ fn keyval(p: &mut Parser) {
 // Value = String | Number | Bool | Array | TableInline
 fn value(p: &mut Parser) {
     let mark = p.open();
-    if p.next_is(StringOrKey) {
-        p.advance();
+    if p.advance_if(StringOrKey).success() {
         p.close(mark, tree::Kind::String);
-    } else if p.next_is(StringMultiline) {
-        p.advance();
+    } else if p.advance_if(StringMultiline).success() {
         p.close(mark, tree::Kind::StringMulti);
-    } else if p.next_is(Float) {
-        p.advance();
+    } else if p.advance_if(Float).success() {
         p.close(mark, tree::Kind::Float);
-    } else if p.next_is(Integer) {
-        p.advance();
+    } else if p.advance_if(Integer).success() {
         p.close(mark, tree::Kind::Integer);
-    } else if p.next_is(Bool) {
-        p.advance();
+    } else if p.advance_if(Bool).success() {
         p.close(mark, tree::Kind::Bool);
     } else if p.next_is(LBracket) {
         array(p);

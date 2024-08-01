@@ -1,0 +1,6 @@
+[[language]]
+name = "toml"
+language-servers = [ "aoxo-toml" ]
+
+[language-server.aoxo-toml]
+command = "aoxo-toml"
