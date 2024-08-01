@@ -4,12 +4,13 @@ Expr =
     | Table
     | KeyVal
 
-Table = '[' Key ']' '\n' (KeyVal '\n')*
 TableArray = '[[' Key ']]' '\n' KeyVal*
-Key = ('str_key' | Key) ('.' ('str_key' | Key))*
+Table = '[' Key ']' '\n' (KeyVal '\n')*
+
 KeyVal = Key '=' Value
-Array = '[' (Value ( ',' | '\n' ))* ']'
-TableInline = '{' KeyVal? (',' KeyVal)* '}'
+
+Key = KeyPart ('.' KeyPart)*
+KeyPart = 'str_key' | 'key'
 
 Value =
       'string'
@@ -17,3 +18,6 @@ Value =
     | 'bool'
     | Array
     | TableInline
+
+Array = '[' (Value ( ',' | '\n' ))* ']'
+TableInline = '{' KeyVal? (',' KeyVal)* '}'

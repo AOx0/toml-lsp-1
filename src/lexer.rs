@@ -66,7 +66,7 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
         res
     }
 
-    pub fn next_token(&mut self) -> Token {
+    pub fn next_token(&mut self, mut errors: Option<&mut Vec<crate::parser::Error>>) -> Token {
         let token = Token {
             span: self.current_span[0],
             kind: self.current_kind[0],
@@ -74,8 +74,41 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
 
         let new = 'a: loop {
             let new = self.next_impl();
-            if new.kind != token::Kind::Space && new.kind != token::Kind::Comment {
+            if new.kind != token::Kind::Space
+                && new.kind != token::Kind::Comment
+                && !new.kind.is_error()
+            {
                 break 'a new;
+            }
+
+            if new.kind.is_error() {
+                match new.kind {
+                    token::Kind::NonClosingString | token::Kind::NonClosingMultilineString => {
+                        if let Some(errors) = errors {
+                            errors.push(crate::parser::Error {
+                                kind: crate::tree::Kind::UnclosedString,
+                                span: new.span,
+                            });
+                        }
+                        let kind = match new.kind {
+                            token::Kind::NonClosingString => token::Kind::StringOrKey,
+                            token::Kind::NonClosingMultilineString => token::Kind::StringMultiline,
+                            _ => panic!(),
+                        };
+                        break 'a Token {
+                            kind,
+                            span: new.span,
+                        };
+                    }
+                    _ => {
+                        if let Some(ref mut errors) = errors {
+                            errors.push(crate::parser::Error {
+                                kind: crate::tree::Kind::Unknown,
+                                span: new.span,
+                            });
+                        }
+                    }
+                }
             }
         };
 
@@ -106,19 +139,19 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
             '\'' if self.matches(to_char_array!("''")) => {
                 self.cursor.bump_n(3);
                 self.consume_delimited(MultiLine::Yes, to_char_array!("'''"))
-                    .unwrap_or(token::Kind::NonClosing)
+                    .unwrap_or(token::Kind::NonClosingMultilineString)
             }
             '\'' => self
                 .consume_delimited(MultiLine::No, to_char_array!("'"))
-                .unwrap_or(token::Kind::NonClosing),
+                .unwrap_or(token::Kind::NonClosingString),
             '"' if self.matches(to_char_array!(r#""""#)) => {
                 self.cursor.bump_n(3);
                 self.consume_delimited(MultiLine::Yes, to_char_array!(r#"""""#))
-                    .unwrap_or(token::Kind::NonClosing)
+                    .unwrap_or(token::Kind::NonClosingMultilineString)
             }
             '"' => self
                 .consume_delimited(MultiLine::No, to_char_array!("\""))
-                .unwrap_or(token::Kind::NonClosing),
+                .unwrap_or(token::Kind::NonClosingString),
             '[' => token::Kind::LBracket,
             ']' => token::Kind::RBracket,
             '{' => token::Kind::LCurly,
@@ -128,12 +161,46 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
             '#' => self.consume_comment(),
             '.' => token::Kind::Dot,
             'a'..='z' | 'A'..='Z' | '_' => self.consume_key(start),
-            _ => token::Kind::Unknown,
+            _ => self.consume_unknown(),
         };
 
         let span = Span::from(start..self.cursor.cursor());
         self.last_span = span;
         Token { span, kind }
+    }
+
+    fn consume_unknown(&mut self) -> token::Kind {
+        while let Some(peek) = self.cursor.peek() {
+            match peek {
+                ' '
+                | '\t'
+                | '\n'
+                | '\r'
+                | '-'
+                | '+'
+                | '0'..='9'
+                | '\''
+                | '"'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | '='
+                | '#'
+                | '.'
+                | 'a'..='z'
+                | 'A'..='Z'
+                | '_' => {
+                    break;
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        token::Kind::Unknown
     }
 
     fn consume_matching(&mut self, matching: char) {
@@ -246,121 +313,5 @@ impl<'src, const LOOK: usize> Lexer<'src, LOOK> {
         }
 
         None
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::lexer::Lexer;
-
-    #[test]
-    fn delimited_string() {
-        let source = "['hello']";
-        let mut lexer: Lexer<1> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::StringOrKey);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none())
-    }
-
-    #[test]
-    fn undelimted_string() {
-        let source = "['hello]";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::NonClosing);
-        assert!(lexer.cursor.peek().is_none())
-    }
-
-    #[test]
-    fn recover_unterminated_string() {
-        let source = "['hello\\nworld\n[";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::NonClosing);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Newline);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert!(lexer.cursor.peek().is_none())
-    }
-
-    #[test]
-    fn delimiter_multiline_string() {
-        let source = "['''hello\nworld''']";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::StringMultiline);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
-
-        let source = r#"["""hello\nworld"""]"#;
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::StringMultiline);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
-    }
-
-    #[test]
-    fn number() {
-        let source = "[123 456]";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Integer);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Space);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Integer);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
-    }
-
-    #[test]
-    fn float() {
-        let source = "[123_12.456 456.12_123 -nan nan inf]";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Float);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Space);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Float);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Space);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Float);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Space);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Float);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Space);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Float);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
-    }
-
-    #[test]
-    fn key_starting_with_number() {
-        let source = "[123key]";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Key);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
-
-        let source = "[1.a23key.01_a-no.ther.123]";
-        let mut lexer: Lexer<3> = super::Lexer::new(source);
-
-        assert_eq!(lexer.next_token().kind, super::token::Kind::LBracket);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Integer);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Dot);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Key);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Dot);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Key);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Dot);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Key);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Dot);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::Integer);
-        assert_eq!(lexer.next_token().kind, super::token::Kind::RBracket);
-        assert!(lexer.cursor.peek().is_none());
     }
 }

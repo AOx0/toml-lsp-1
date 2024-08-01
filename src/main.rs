@@ -3,17 +3,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use args::Args;
+use aoxo_toml::{
+    args::Args,
+    parser::{Error, Parser},
+    tree::Tree,
+};
 use clap::Parser as _;
-use parser::{Error, Parser};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{lsp_types::*, LanguageServer};
 use tower_lsp::{Client, LspService, Server};
-use tree::Tree;
-
-mod args;
-mod parser;
-mod tree;
 
 #[derive(Debug)]
 struct Backend {

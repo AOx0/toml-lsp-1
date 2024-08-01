@@ -1,4 +1,4 @@
-use aoxo_toml::{span::Span, token};
+use crate::{span::Span, token};
 
 pub struct Tree {
     pub kind: Kind,
@@ -26,7 +26,7 @@ impl core::fmt::Debug for Tree {
 impl Tree {
     pub fn new() -> Self {
         Self {
-            kind: Kind::Unkown,
+            kind: Kind::Unknown,
             span: Span::from(0..0),
             children: Vec::new(),
         }
@@ -89,11 +89,12 @@ pub enum Kind {
     MissingValue,
     Extra(token::Kind),
     Guard,
-    Unkown,
+    Unknown,
     Expected(token::Kind),
     ExpectedAny(&'static [token::Kind]),
-    Unclosed,
+    UnclosedString,
     InvalidToken,
+    Forbidden(token::Kind),
 }
 
 impl Kind {
@@ -108,10 +109,10 @@ impl Kind {
                 | Self::MissingValue
                 | Self::Extra(_)
                 | Self::Guard
-                | Self::Unkown
+                | Self::Unknown
                 | Self::Expected(_)
                 | Self::ExpectedAny(_)
-                | Self::Unclosed
+                | Self::UnclosedString
         )
     }
 

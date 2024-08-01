@@ -1,5 +1,5 @@
 use crate::tree;
-use aoxo_toml::{lexer::Lexer, span::Span, token};
+use crate::{lexer::Lexer, span::Span};
 use std::{cell::Cell, u8};
 
 mod grammar;
@@ -22,8 +22,9 @@ pub struct Parser<'src> {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Event {
     Close,
-    Advance { token: aoxo_toml::token::Token },
-    Skip { token: aoxo_toml::token::Token },
+    Advance { token: crate::token::Token },
+    Ignore,
+    Skip { span: Span },
     Open { kind: tree::Kind, span: Span },
 }
 
@@ -32,14 +33,14 @@ struct MarkOpen {
 }
 
 enum Status {
-    Success,
+    Advanced,
     Failure,
 }
 
 impl From<bool> for Status {
     fn from(b: bool) -> Self {
         if b {
-            Status::Success
+            Status::Advanced
         } else {
             Status::Failure
         }
@@ -47,8 +48,8 @@ impl From<bool> for Status {
 }
 
 impl Status {
-    fn success(&self) -> bool {
-        matches!(self, Status::Success)
+    fn advanced(&self) -> bool {
+        matches!(self, Status::Advanced)
     }
     fn failed(&self) -> bool {
         matches!(self, Status::Failure)
@@ -68,7 +69,7 @@ impl<'src> Parser<'src> {
 
     fn open(&mut self) -> MarkOpen {
         self.events.push(Event::Open {
-            kind: tree::Kind::Unkown,
+            kind: tree::Kind::Unknown,
             span: self.lexer.peek_span::<0>(),
         });
         MarkOpen {
@@ -86,6 +87,13 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn add_error_full(&mut self, kind: tree::Kind) {
+        self.errors.push(Error {
+            span: self.lexer.peek_span::<0>(),
+            kind,
+        })
+    }
+
     fn add_error(&mut self, kind: tree::Kind) {
         self.errors.push(Error {
             span: self.lexer.peek_span::<0>().reduce_to(1),
@@ -93,32 +101,35 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn advance(&mut self) {
+    fn advance(&mut self) -> Status {
         assert!(!self.eof());
         #[cfg(debug_assertions)]
         self.fuel.set(u8::MAX);
         self.events.push(Event::Advance {
-            token: self.lexer.next_token(),
+            token: self.lexer.next_token(Some(&mut self.errors)),
         });
+        Status::Advanced
     }
 
-    fn skip(&mut self) {
+    fn skip(&mut self) -> Status {
         assert!(!self.eof());
         #[cfg(debug_assertions)]
         self.fuel.set(u8::MAX);
-        self.events.push(Event::Skip {
-            token: self.lexer.next_token(),
-        });
+        let token = self.lexer.next_token(Some(&mut self.errors));
+        self.events.push(Event::Skip { span: token.span });
+        Status::Advanced
     }
 
-    fn advance_with_error(&mut self, kind: tree::Kind) {
-        let mark = self.open();
-        self.add_error(kind);
-        self.advance();
-        self.close(mark, kind);
+    fn ignore(&mut self) -> Status {
+        assert!(!self.eof());
+        #[cfg(debug_assertions)]
+        self.fuel.set(u8::MAX);
+        self.events.push(Event::Ignore);
+        self.lexer.next_token(Some(&mut self.errors));
+        Status::Advanced
     }
 
-    pub fn peek_kind(&self) -> aoxo_toml::token::Kind {
+    fn peek_kind(&self) -> crate::token::Kind {
         #[cfg(debug_assertions)]
         if self.fuel.get() == 0 {
             panic!(
@@ -132,7 +143,7 @@ impl<'src> Parser<'src> {
         self.lexer.peek_kind::<0>()
     }
 
-    fn next_are<const N: usize>(&self, kinds: [aoxo_toml::token::Kind; N]) -> bool {
+    fn next_are<const N: usize>(&self, kinds: [crate::token::Kind; N]) -> bool {
         #[cfg(debug_assertions)]
         {
             assert!(self.fuel.get() > 0);
@@ -143,7 +154,7 @@ impl<'src> Parser<'src> {
         self.lexer.peek_kind_array::<N>() == kinds
     }
 
-    fn next_is(&self, kind: aoxo_toml::token::Kind) -> bool {
+    fn next_is(&self, kind: crate::token::Kind) -> bool {
         #[cfg(debug_assertions)]
         {
             assert!(self.fuel.get() > 0);
@@ -152,49 +163,40 @@ impl<'src> Parser<'src> {
         self.peek_kind() == kind
     }
 
-    fn advance_if(&mut self, kind: aoxo_toml::token::Kind) -> Status {
+    fn advance_if(&mut self, kind: crate::token::Kind) -> Status {
         self.advance_if_any(&[kind])
     }
 
-    fn skip_if(&mut self, kind: aoxo_toml::token::Kind) -> Status {
+    fn skip_if(&mut self, kind: crate::token::Kind) -> Status {
         self.skip_if_any(&[kind])
     }
 
-    fn expect(&mut self, kind: aoxo_toml::token::Kind) {
-        if self.advance_if(kind).failed() {
-            let m = self.open();
-            self.close(m, tree::Kind::Expected(kind));
-        }
-    }
-
-    fn skip_expect(&mut self, kind: aoxo_toml::token::Kind) {
+    fn skip_expect(&mut self, kind: crate::token::Kind) {
         if self.skip_if(kind).failed() {
-            let m = self.open();
             self.add_error(tree::Kind::Expected(kind));
-            self.close(m, tree::Kind::Expected(kind));
         }
     }
 
-    fn advance_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> Status {
+    fn advance_if_any(&mut self, kinds: &[crate::token::Kind]) -> Status {
         if kinds.contains(&self.peek_kind()) {
             self.advance();
-            Status::Success
+            Status::Advanced
         } else {
             Status::Failure
         }
     }
 
-    fn skip_if_any(&mut self, kinds: &[aoxo_toml::token::Kind]) -> Status {
+    fn skip_if_any(&mut self, kinds: &[crate::token::Kind]) -> Status {
         if kinds.contains(&self.peek_kind()) {
             self.skip();
-            Status::Success
+            Status::Advanced
         } else {
             Status::Failure
         }
     }
 
     fn eof(&self) -> bool {
-        self.lexer.peek_kind::<0>() == aoxo_toml::token::Kind::Eof
+        self.lexer.peek_kind::<0>() == crate::token::Kind::Eof
     }
 
     pub fn parse(mut self) -> Self {
@@ -221,16 +223,15 @@ impl<'src> Parser<'src> {
                     stack.last_mut().unwrap().span(token.span);
                     stack.last_mut().unwrap().child(tree::Child::Token(token));
                 }
-                Event::Skip { token } => {
-                    if token.kind != token::Kind::Eof && token.kind != token::Kind::Newline {
-                        stack.last_mut().unwrap().span(token.span);
-                    }
+                Event::Skip { span } => {
+                    stack.last_mut().unwrap().span(span);
                 }
+                Event::Ignore => {}
             }
         }
 
         assert!(stack.len() == 1, "stack is not empty {:?}", stack);
-        assert_eq!(self.lexer.peek_kind::<0>(), aoxo_toml::token::Kind::Eof);
+        assert_eq!(self.lexer.peek_kind::<0>(), crate::token::Kind::Eof);
 
         (stack.pop().unwrap(), self.errors)
     }

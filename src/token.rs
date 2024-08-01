@@ -37,7 +37,7 @@ impl Token {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Kind {
     Key,
     StringOrKey,
@@ -59,14 +59,57 @@ pub enum Kind {
     Dot,
     Eof,
 
+    DoubleLBracket,
+    DoubleRBracket,
+
     // Errors
-    NonClosing,
+    NonClosingString,
+    NonClosingMultilineString,
     Unknown,
     InvalidFloat,
 }
 
+impl std::fmt::Debug for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let s = match self {
+            Self::Key => "Key",
+            Self::StringOrKey => "StringOrKey",
+            Self::StringMultiline => "StringMultiline",
+            Self::Integer => "Integer",
+            Self::Float => "Float",
+            Self::Bool => "`true` or `false`",
+            Self::Datetime => "Datetime",
+            Self::Comma => "`,`",
+            Self::Equal => "`=`",
+            Self::LBracket => "`[`",
+            Self::RBracket => "`]`",
+            Self::DoubleLBracket => "`[[`",
+            Self::DoubleRBracket => "`]]`",
+            Self::LCurly => "`{`",
+            Self::RCurly => "`}`",
+            Self::Newline => "Newline",
+            Self::Space => "Space",
+            Self::Tab => "Tab",
+            Self::Comment => "Comment",
+            Self::Dot => "`.`",
+            Self::Eof => "Eof",
+            Self::NonClosingString => "NonClosingString",
+            Self::NonClosingMultilineString => "NonClosingMultilineString",
+            Self::Unknown => "Unknown",
+            Self::InvalidFloat => "InvalidFloat",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl Kind {
     pub fn is_error(&self) -> bool {
-        matches!(self, Self::Unknown | Self::InvalidFloat | Self::NonClosing)
+        matches!(
+            self,
+            Self::Unknown
+                | Self::InvalidFloat
+                | Self::NonClosingString
+                | Self::NonClosingMultilineString
+        )
     }
 }
